@@ -1,0 +1,56 @@
+# Bonus: build the images and push them to GitHub Container Registry (ghcr.io).
+# Runs on pushes to the main branch and on version tags (v1.0.0, v1.2.3, ...).
+name: Publish to GHCR
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  packages: write # needed so GITHUB_TOKEN can push to ghcr.io
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [api, web]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # GITHUB_TOKEN is created automatically for every run.
+      # No personal password or token is stored anywhere.
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Automatic tags:
+      #   v1.0.<run number>  - a version number on every push to main
+      #   1.2.3 / 1.2        - when you push a git tag like v1.2.3
+      #   latest             - the newest build from main
+      #   sha-<commit>       - exact commit, for traceability
+      - name: Generate image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}-${{ matrix.service }}
+          tags: |
+            type=raw,value=v1.0.${{ github.run_number }},enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ matrix.service }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

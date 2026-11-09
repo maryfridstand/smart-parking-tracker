@@ -1,0 +1,44 @@
+# CI: on every push and pull request, check that the Docker images build,
+# that the whole stack starts, that the API works, and that Redis data
+# survives `docker compose down` + `up` (the volume).
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker images
+        run: docker compose build
+
+      - name: Start the stack
+        run: docker compose up -d --wait
+
+      - name: Smoke test - add a car and read it back
+        run: |
+          curl -fsS -X POST http://localhost:8080/api/cars \
+            -H "Content-Type: application/json" \
+            -d '{"plate":"12-345-67"}'
+          curl -fsS http://localhost:8080/api/cars | tee response.json
+          grep -q '12-345-67' response.json
+
+      - name: Persistence test - down, up, data still there
+        run: |
+          docker compose down          # no -v, so the volume is kept
+          docker compose up -d --wait
+          curl -fsS http://localhost:8080/api/cars | grep -q '12-345-67'
+          echo "Data survived the restart ✔"
+
+      - name: Show logs if something failed
+        if: failure()
+        run: docker compose logs
+
+      - name: Clean up
+        if: always()
+        run: docker compose down -v
